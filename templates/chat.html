@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Чат — ДОНОЯК TJ{% endblock %}
+{% block head %}
+<style>
+.chat-layout { display:flex; gap:12px; flex-wrap:wrap; }
+.chat-side { flex:0 0 220px; max-width:100%; }
+.chat-main { flex:1 1 280px; min-width:0; }
+#chat-box { height:min(55vh,420px); overflow:auto; border:1px solid #e5e7eb; border-radius:12px; padding:12px; background:#f8fafc; }
+.msg { max-width:85%; margin:8px 0; padding:8px 12px; border-radius:12px; font-size:.95rem; word-break:break-word; }
+.msg.mine { margin-left:auto; background:#1a6b7a; color:#fff; }
+.msg.other { margin-right:auto; background:#fff; border:1px solid #e5e7eb; }
+.msg img.chat-img { max-width:100%; border-radius:8px; display:block; margin-top:4px; }
+.msg audio { width:100%; margin-top:4px; }
+.chat-tools { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+.chat-tools .btn-sm { padding:6px 10px; font-size:.85rem; }
+#chat-input { flex:1; min-width:120px; padding:10px 12px; border-radius:10px; border:1px solid #ccc; }
+#cam-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:10000; align-items:center; justify-content:center; padding:16px; }
+#cam-modal .box { background:#111; border-radius:12px; padding:12px; max-width:420px; width:100%; }
+#cam-modal video { width:100%; border-radius:8px; background:#000; }
+@media (max-width:600px) {
+  .chat-side { flex:1 1 100%; }
+  #chat-box { height:45vh; }
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container" style="max-width:960px;">
+  <h1>Чат {% if is_admin %}(админ){% else %}с администратором{% endif %}</h1>
+  <div class="chat-layout">
+    {% if is_admin %}
+    <div class="card chat-side">
+      <div class="card-title">Студенты</div>
+      <div id="student-list" style="max-height:400px;overflow:auto;">
+        {% for s in students %}
+        <button type="button" class="btn btn-outline btn-sm" style="width:100%;margin-bottom:6px;text-align:left;"
+                data-uid="{{ s.id }}" onclick="selectStudent({{ s.id }}, this)">
+          <span class="dot" id="dot-{{ s.id }}" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{% if online.get(s.id) %}#22c55e{% else %}#9ca3af{% endif %};margin-right:6px;"></span>
+          {{ s.full_name }}
+        </button>
+        {% else %}
+        <p>Нет студентов</p>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    <div class="card chat-main">
+      <div class="card-title" id="chat-title">{% if is_admin %}Выберите студента{% else %}Администратор{% endif %}</div>
+      <div id="chat-box"></div>
+      <div class="chat-tools">
+        <input id="chat-input" type="text" placeholder="Сообщение..." {% if is_admin %}disabled{% endif %}>
+        <button class="btn btn-primary btn-sm" type="button" id="btn-send" onclick="sendText()">Отправить</button>
+        <label class="btn btn-outline btn-sm" style="cursor:pointer;margin:0;">
+          📎 Файл
+          <input type="file" id="file-input" style="display:none;" accept="image/*,audio/*,.pdf,.doc,.docx,.txt">
+        </label>
+        <label class="btn btn-outline btn-sm" style="cursor:pointer;margin:0;">
+          🖼 Фото
+          <input type="file" id="photo-input" style="display:none;" accept="image/*" capture="environment">
+        </label>
+        <button class="btn btn-outline btn-sm" type="button" onclick="openCamera()">📷 Камера</button>
+        <button class="btn btn-outline btn-sm" type="button" id="btn-voice" onclick="toggleVoice()">🎤 Голос</button>
+      </div>
+      <p id="voice-status" style="font-size:.85rem;color:#666;margin:6px 0 0;"></p>
+    </div>
+  </div>
+</div>
+
+<div id="cam-modal">
+  <div class="box">
+    <video id="cam-video" autoplay playsinline></video>
+    <canvas id="cam-canvas" style="display:none;"></canvas>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+      <button class="btn btn-primary" type="button" onclick="snapPhoto()">Снять и отправить</button>
+      <button class="btn btn-outline" type="button" onclick="closeCamera()" style="color:#fff;border-color:#fff;">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var otherId = {% if is_admin %}null{% else %}{{ students[0].id if students else 'null' }}{% endif %};
+var meId = {{ current_user.id }};
+var mediaRecorder = null;
+var voiceChunks = [];
+var recording = false;
+var camStream = null;
+
+function selectStudent(id, btn) {
+  otherId = id;
+  document.querySelectorAll('#student-list button').forEach(b => {
+    b.classList.remove('btn-primary'); b.classList.add('btn-outline');
+  });
+  if (btn) { btn.classList.add('btn-primary'); btn.classList.remove('btn-outline'); }
+  document.getElementById('chat-title').textContent = btn ? btn.textContent.trim() : ('Студент #' + id);
+  document.getElementById('chat-input').disabled = false;
+  loadMsgs();
+}
+
+function renderMsg(m) {
+  var div = document.createElement('div');
+  div.className = 'msg ' + (m.mine ? 'mine' : 'other');
+  var html = '';
+  if (m.msg_type === 'image' || m.msg_type === 'camera') {
+    if (m.media_url) html += '<img class="chat-img" src="' + m.media_url + '" alt="photo">';
+    if (m.message && m.message.indexOf('[') !== 0) html += '<div>' + escapeHtml(m.message) + '</div>';
+  } else if (m.msg_type === 'voice') {
+    if (m.media_url) html += '<audio controls src="' + m.media_url + '"></audio>';
+    else html += escapeHtml(m.message || '[голос]');
+  } else if (m.msg_type === 'file') {
+    if (m.media_url) html += '<a href="' + m.media_url + '" target="_blank" rel="noopener">' + escapeHtml(m.message || 'Файл') + '</a>';
+    else html += escapeHtml(m.message || '[файл]');
+  } else {
+    html += escapeHtml(m.message || '');
+  }
+  div.innerHTML = html;
+  return div;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function loadMsgs() {
+  if (!otherId && {{ 'true' if is_admin else 'false' }}) return;
+  var url = '/api/chat/messages';
+  if (otherId) url += '?user_id=' + otherId;
+  fetch(url).then(r => r.json()).then(data => {
+    var box = document.getElementById('chat-box');
+    box.innerHTML = '';
+    (data.messages || []).forEach(function(m){ box.appendChild(renderMsg(m)); });
+    box.scrollTop = box.scrollHeight;
+  }).catch(function(){});
+}
+
+function sendText() {
+  if (!otherId && {{ 'true' if is_admin else 'false' }}) { alert('Выберите студента'); return; }
+  var input = document.getElementById('chat-input');
+  var text = (input.value || '').trim();
+  if (!text) return;
+  fetch('/api/chat/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ message: text, receiver_id: otherId || 0 })
+  }).then(r => r.json()).then(function(d){
+    if (d.ok) { input.value = ''; loadMsgs(); }
+    else alert(d.error || 'Ошибка');
+  });
+}
+
+function sendFile(file, msgType) {
+  if (!file) return;
+  if (!otherId && {{ 'true' if is_admin else 'false' }}) { alert('Выберите студента'); return; }
+  var fd = new FormData();
+  fd.append('file', file);
+  fd.append('msg_type', msgType || 'file');
+  fd.append('receiver_id', otherId || 0);
+  fetch('/api/chat/send', { method: 'POST', body: fd })
+    .then(r => r.json()).then(function(d){
+      if (d.ok) loadMsgs();
+      else alert(d.error || 'Ошибка загрузки');
+    });
+}
+
+document.getElementById('file-input').addEventListener('change', function(){
+  if (this.files[0]) sendFile(this.files[0], 'file');
+  this.value = '';
+});
+document.getElementById('photo-input').addEventListener('change', function(){
+  if (this.files[0]) sendFile(this.files[0], 'image');
+  this.value = '';
+});
+
+document.getElementById('chat-input').addEventListener('keydown', function(e){
+  if (e.key === 'Enter') { e.preventDefault(); sendText(); }
+});
+
+function toggleVoice() {
+  if (recording) {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    recording = false;
+    document.getElementById('btn-voice').textContent = '🎤 Голос';
+    document.getElementById('voice-status').textContent = 'Отправка...';
+    return;
+  }
+  if (!otherId && {{ 'true' if is_admin else 'false' }}) { alert('Выберите студента'); return; }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
+    voiceChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = function(e){ if (e.data.size) voiceChunks.push(e.data); };
+    mediaRecorder.onstop = function(){
+      stream.getTracks().forEach(t => t.stop());
+      var blob = new Blob(voiceChunks, { type: 'audio/webm' });
+      var file = new File([blob], 'voice.webm', { type: 'audio/webm' });
+      sendFile(file, 'voice');
+      document.getElementById('voice-status').textContent = '';
+    };
+    mediaRecorder.start();
+    recording = true;
+    document.getElementById('btn-voice').textContent = '⏹ Стоп';
+    document.getElementById('voice-status').textContent = 'Запись... нажмите Стоп';
+  }).catch(function(){ alert('Нет доступа к микрофону'); });
+}
+
+function openCamera() {
+  if (!otherId && {{ 'true' if is_admin else 'false' }}) { alert('Выберите студента'); return; }
+  var modal = document.getElementById('cam-modal');
+  modal.style.display = 'flex';
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }).then(function(stream){
+    camStream = stream;
+    document.getElementById('cam-video').srcObject = stream;
+  }).catch(function(){
+    navigator.mediaDevices.getUserMedia({ video: true }).then(function(stream){
+      camStream = stream;
+      document.getElementById('cam-video').srcObject = stream;
+    }).catch(function(){ alert('Нет доступа к камере'); closeCamera(); });
+  });
+}
+function closeCamera() {
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  camStream = null;
+  document.getElementById('cam-modal').style.display = 'none';
+}
+function snapPhoto() {
+  var video = document.getElementById('cam-video');
+  var canvas = document.getElementById('cam-canvas');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  canvas.toBlob(function(blob){
+    if (!blob) return;
+    var file = new File([blob], 'camera.jpg', { type: 'image/jpeg' });
+    sendFile(file, 'camera');
+    closeCamera();
+  }, 'image/jpeg', 0.85);
+}
+
+{% if not is_admin %}
+loadMsgs();
+setInterval(loadMsgs, 4000);
+{% else %}
+setInterval(function(){ if (otherId) loadMsgs(); }, 4000);
+{% endif %}
+</script>
+{% endblock %}

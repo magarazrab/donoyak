@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Студенты{% endblock %}
+{% block content %}
+<div class="container" style="max-width:1100px;">
+  <h1>Пользователи</h1>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Имя</th>
+          <th>Email / логин</th>
+          <th>Пароль</th>
+          <th>Pro</th>
+          <th>Устройство</th>
+          <th>Регистрация</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ u.full_name }}</td>
+          <td>{{ u.email }}</td>
+          <td><code>{{ u.password_plain or '—' }}</code></td>
+          <td>{% if u.is_pro %}Да{% else %}Нет{% endif %}</td>
+          <td>{{ u.device_type or '—' }}</td>
+          <td>{{ (u.created_at or '')[:16] }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('admin_student_delete', uid=u.id) }}" onsubmit="return confirm('Удалить аккаунт?');">
+              <button class="btn btn-sm" type="submit" style="background:#c0392b;color:#fff;">Удалить</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8">Нет студентов</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <a href="{{ url_for('admin_dashboard') }}">Назад</a>
+</div>
+{% endblock %}

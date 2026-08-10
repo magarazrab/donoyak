@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="{{ lang or 'ru' }}" data-theme="{{ current_user.theme if current_user.is_authenticated else 'light' }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a5f7a">
+    <link rel="manifest" href="/manifest.json">
+    <title>{% block title %}ДОНОЯК TJ{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+
+<style>
+/* Адаптив по типу устройства из регистрации */
+body.device-mobile .container { max-width: 100%; padding: 10px 12px; }
+body.device-mobile .navbar .nav-links { flex-wrap: wrap; gap: 6px; font-size: .88rem; }
+body.device-mobile .card { padding: 12px; border-radius: 12px; }
+body.device-mobile table { font-size: .85rem; display: block; overflow-x: auto; }
+body.device-mobile .btn { min-height: 42px; padding: 10px 14px; }
+body.device-mobile input, body.device-mobile select, body.device-mobile textarea { font-size: 16px; min-height: 42px; }
+
+body.device-tablet .container { max-width: 820px; padding: 14px 18px; }
+body.device-tablet .nav-links { gap: 10px; }
+body.device-tablet .btn { min-height: 40px; }
+
+body.device-desktop .container { max-width: 1100px; }
+body.device-desktop .nav-links a { padding: 6px 10px; }
+
+@media (max-width: 640px) {
+  .navbar .nav-links { font-size: .82rem; }
+  .container { padding-left: 10px; padding-right: 10px; }
+}
+</style>
+
+</head>
+<body class="device-{{ (current_user.device_type if current_user.is_authenticated else 'mobile')|default('mobile') }}">
+    {% if current_user.is_authenticated %}
+    <nav class="navbar">
+        <div class="container">
+            <a href="{{ url_for('dashboard') if not current_user.is_admin else url_for('admin_dashboard') }}" class="navbar-brand">
+                ДОНОЯК <span>TJ</span>
+                {% if current_user.is_pro and not current_user.is_admin %}
+                <span class="badge-pro">PRO</span>
+                {% endif %}
+            </a>
+            <div class="nav-links">
+                {% if current_user.is_admin %}
+                    <a href="{{ url_for('admin_dashboard') }}">Панель</a>
+                    <a href="{{ url_for('admin_content') }}">Контент</a>
+                    <a href="{{ url_for('admin_stats') }}">Статистика</a>
+                    <a href="{{ url_for('admin_payment') }}">Реквизиты</a>
+                    <a href="{{ url_for('admin_social') }}">Соцсети</a>
+                    <a href="{{ url_for('admin_users') }}">Пользователи</a>
+                    <a href="{{ url_for('admin_results') }}">Результаты</a>
+                    <a href="{{ url_for('chat_page') }}">Чат</a>
+                    <a href="{{ url_for('admin_backup') }}">Бэкап БД</a>
+                {% else %}
+                    <a href="{{ url_for('dashboard') }}">Тесты</a>
+                    <a href="{{ url_for('leaderboard') }}">Мои результаты</a>
+                    <a href="{{ url_for('pro_page') }}">Pro</a>
+                    <a href="{{ url_for('chat_page') }}">Чат</a>
+                <a href="{{ url_for('settings') }}">Настройки</a>
+                {% endif %}
+                <a href="{{ url_for('logout') }}">Выход</a>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-container">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+
+    <footer class="footer">
+        ДОНОЯК TJ &mdash; Онлайн-тесты и подготовка
+    </footer>
+
+    <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            {% if current_user.is_authenticated %}
+            setupPush(reg);
+            {% endif %}
+        }).catch(function(){});
+    }
+    function urlBase64ToUint8Array(base64String) {
+        var padding = '='.repeat((4 - base64String.length % 4) % 4);
+        var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        var rawData = window.atob(base64);
+        var outputArray = new Uint8Array(rawData.length);
+        for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+        return outputArray;
+    }
+    function setupPush(reg) {
+        if (!('PushManager' in window) || !window.isSecureContext) return;
+        fetch('/api/push/vapid_public').then(function(r){ return r.json(); }).then(function(data) {
+            if (!data.publicKey) return;
+            return reg.pushManager.getSubscription().then(function(sub) {
+                if (sub) return saveSub(sub);
+                return Notification.requestPermission().then(function(perm) {
+                    if (perm !== 'granted') return;
+                    return reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(data.publicKey)
+                    }).then(saveSub);
+                });
+            });
+        }).catch(function(){});
+    }
+    function saveSub(sub) {
+        var j = sub.toJSON();
+        return fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(j)
+        });
+    }
+    </script>
+    
+    <div id="promo-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;padding:16px;">
+      <div style="background:var(--card-bg,#fff);border-radius:14px;max-width:420px;width:100%;padding:20px;position:relative;box-shadow:0 8px 32px rgba(0,0,0,.2);">
+        <button type="button" id="promo-close" style="position:absolute;right:12px;top:10px;border:none;background:transparent;font-size:1.4rem;cursor:pointer;">&times;</button>
+        <h3 style="margin:0 0 8px;">Подпишитесь на наши соцсети</h3>
+        <p style="font-size:.9rem;color:#666;margin:0 0 12px;">Подпишитесь на все аккаунты, затем нажмите «Подтвердить».</p>
+        <div id="promo-links" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
+        <button type="button" id="promo-confirm" class="btn btn-primary" style="width:100%;">Подтвердить</button>
+      </div>
+    </div>
+    <script>
+    (function(){
+      {% if current_user.is_authenticated and not current_user.is_admin %}
+      // не на странице теста
+      if (location.pathname.indexOf('/test/') === 0) return;
+      fetch('/api/promo/status').then(function(r){return r.json()}).then(function(data){
+        if (!data.show || !data.links || !data.links.length) return;
+        var box = document.getElementById('promo-links');
+        data.links.forEach(function(L){
+          var a = document.createElement('a');
+          a.href = L.url; a.target = '_blank'; a.rel = 'noopener';
+          a.className = 'btn btn-outline'; a.style.cssText = 'display:block;text-align:center;';
+          a.textContent = (L.network || 'link') + (L.title ? ' — ' + L.title : '');
+          box.appendChild(a);
+        });
+        var modal = document.getElementById('promo-modal');
+        modal.style.display = 'flex';
+        document.getElementById('promo-close').onclick = function(){ modal.style.display = 'none'; fetch('/api/promo/dismiss',{method:'POST'}); };
+        document.getElementById('promo-confirm').onclick = function(){
+          fetch('/api/promo/subscribe',{method:'POST'}).then(function(){ modal.style.display = 'none'; });
+        };
+      }).catch(function(){});
+      {% endif %}
+    })();
+    </script>
+
+    <script>
+    {% if current_user.is_authenticated %}
+    setInterval(function(){ fetch('/api/presence',{method:'POST'}).catch(function(){}); }, 45000);
+    fetch('/api/presence',{method:'POST'}).catch(function(){});
+    {% endif %}
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

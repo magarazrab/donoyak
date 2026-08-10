@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Мои результаты — ДОНОЯК TJ{% endblock %}
+{% block content %}
+<div class="container" style="max-width:800px;">
+  <div class="page-header">
+    <h1>Мои результаты</h1>
+  </div>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Предмет</th>
+          <th>Оценка</th>
+          <th>Балл</th>
+          <th>Верно</th>
+          <th>Неверно</th>
+          <th>Дата</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ tests[r.test_id].title.ru if r.test_id in tests else r.test_id }}</td>
+        <td><strong style="font-size:1.15rem;">{{ r._grade }}</strong></td>
+        <td>{{ '%.0f'|format(r.score|float) }} / 100</td>
+        <td>{{ r.correct }}</td>
+        <td>{{ r.incorrect }}</td>
+        <td>{{ r._dt }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">Пока нет результатов</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
